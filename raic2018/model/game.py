@@ -6,7 +6,7 @@ from .robot import *
 
 class Game:
     def __init__(self, json):
-        self.current_tick = json.get("current_tick")
+        self.current_tick: int = json.get("current_tick")
         self.players = list(map(Player, json.get("players")))
         self.robots = list(map(Robot, json.get("robots")))
         self.nitro_packs = list(map(NitroPack, json.get("nitro_packs")))
