@@ -31,12 +31,14 @@ class LocalRunnerClient:
         ports = [random.randrange(10000, 65535) for _ in range(2 if two_player else 1)]
         cur_path = os.path.dirname(os.path.realpath(__file__))
         lr_path = f'{cur_path}/../../localrunner/codeball2018.exe'
-        args = [lr_path, '--noshow', '--no-countdown', '--duration', str(2_000_000_000),
+        args = [lr_path, '--noshow', '--no-countdown', '--duration', str(2_000_000_000), '--team-size', '1',
                 '--p1', f'tcp-{ports[0]}',
                 '--p2', f'tcp-{ports[1]}' if two_player else 'helper']
-        self._proc = subprocess.Popen(args, creationflags=BELOW_NORMAL_PRIORITY_CLASS)
-        time.sleep(0.5)
+        self._proc = subprocess.Popen(args, creationflags=BELOW_NORMAL_PRIORITY_CLASS, stdout=subprocess.PIPE, stdin=subprocess.PIPE)
         atexit.register(lambda p: p.kill(), self._proc)
+        self._proc.stdout.readline()
+        self._proc.stdout.readline()
+        time.sleep(2)
         self._clients = [RemoteProcessClient('127.0.0.1', p) for p in ports]
 
         for client in self._clients:
@@ -51,9 +53,9 @@ class LocalRunnerClient:
         self._waiting_for_actions = True
 
         if self.two_player:
-            return self._p1_game, self._reverse_side(self._p1_game)
+            return [self._p1_game, self._reverse_side(self._p1_game)]
         else:
-            return (self._p1_game,)
+            return [self._p1_game]
 
     def act(self, actions: Dict[int, Action]) -> Optional[Winner]:
         assert self._waiting_for_actions
@@ -81,6 +83,7 @@ class LocalRunnerClient:
         prev_scores = [p.score for p in self._p1_game.players]
         self._p1_game = self._clients[0].read_game()
         assert self._p1_game.players[0].me
+        assert not any(p.strategy_crashed for p in self._p1_game.players)
         cur_scores = [p.score for p in self._p1_game.players]
 
         # return winner
