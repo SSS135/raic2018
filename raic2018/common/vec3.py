@@ -1,17 +1,7 @@
 import math
 
 
-class Vec3Meta(type):
-    @property
-    def zero(cls):
-        return Vec3()
-
-    @property
-    def one(cls):
-        return Vec3(1, 1, 1)
-
-
-class Vec3(metaclass=Vec3Meta):
+class Vec3():
     def __init__(self, x=0.0, y=0.0, z=0.0):
         if isinstance(x, list) or isinstance(x, tuple):
             x, y, z = x
@@ -27,7 +17,7 @@ class Vec3(metaclass=Vec3Meta):
     def normalized(self):
         mag = self.magnitude
         if mag < 1e-10:
-            return Vec3.zero
+            return Vec3()
         return self / mag
 
     def clamp_pointwise(self, a, b):

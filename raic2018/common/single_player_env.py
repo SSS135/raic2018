@@ -8,42 +8,42 @@ import gym
 from gym import spaces
 from raic2018.common.vec2 import Vec2
 from raic2018.common.vec3 import Vec3
+from raic2018.common.reward_shaping import RewardFactory, RewardShaper, KeepCloseToBallReward, BallToEnemyReward, BallVelToEnemyReward, VelToBallReward
 
 
 def get_pos_vel(obj: Union[Robot, Ball]) -> Iterable[float]:
+    pos = np.array([obj.x, obj.y, obj.z]) * 2 / const.ARENA.depth
+    vel = np.array([obj.velocity_x, obj.velocity_y, obj.velocity_z]) / const.ROBOT_MAX_GROUND_SPEED
     return [
-        obj.x * 2 / const.ARENA.width,
-        obj.y * 2 / const.ARENA.height,
-        obj.z * 2 / const.ARENA.depth,
-        obj.velocity_x / const.ROBOT_MAX_GROUND_SPEED,
-        obj.velocity_y / const.ROBOT_MAX_GROUND_SPEED,
-        obj.velocity_z / const.ROBOT_MAX_GROUND_SPEED
+        *pos,
+        *vel,
+        *(vel * 5).clip(-1, 1),
     ]
 
 
 def game_to_obs(game: Game) -> List[float]:
+    ball_pos = np.array([game.ball.x, game.ball.y, game.ball.z])
     obs = []
     obs.extend(get_pos_vel(game.ball))
     for r in game.robots:
+        robot_pos = np.array([r.x, r.y, r.z])
+        obs.extend((5 * (ball_pos - robot_pos) * 2 / const.ARENA.depth).clip(-1, 1))
         obs.extend(get_pos_vel(r))
-        bdir = Vec2(game.ball.x, game.ball.z) - Vec2(r.x, r.z)
+        bdir = Vec3(game.ball.x, game.ball.y, game.ball.z) - Vec3(r.x, r.y, r.z)
         obs.extend(bdir / bdir.magnitude)
+        obs.append(int(r.touch))
     return obs
 
 
-def create_action(arr):
-    # target = Vec2(arr[0] * ARENA.width / 2, arr[1] * (ARENA.depth + ARENA.goal_depth) / 2)
-    # cur = Vec2(robot.x, robot.z)
-    # dir = target - cur
-    # dir /= dir.magnitude
-
-    vel_x, vel_y, vel_z, jump = arr
+def create_action(arr, robot):
+    vel_x, vel_z, jump = arr
+    jump = jump > 0.75
 
     action = Action()
     action.target_velocity_x = vel_x * const.ROBOT_MAX_GROUND_SPEED
-    action.target_velocity_y = vel_y * const.ROBOT_MAX_GROUND_SPEED
+    action.target_velocity_y = (1 if jump else (0 if robot.touch else -1)) * const.ROBOT_MAX_GROUND_SPEED
     action.target_velocity_z = vel_z * const.ROBOT_MAX_GROUND_SPEED
-    action.jump_speed = jump * const.ROBOT_MAX_JUMP_SPEED
+    action.jump_speed = (1 if jump else 0) * const.ROBOT_MAX_JUMP_SPEED
     return action
 
 
@@ -77,92 +77,35 @@ class HelperFrameSkipEnv(FrameSkipEnv):
         super().__init__(HelperEnv())
 
 
-class RewardBase:
-    def __init__(self, scale: float):
-        self.scale = scale
-        self._do_reset = True
-
-    def get_reward(self, game: Game) -> float:
-        raise NotImplementedError
-
-    def reset(self):
-        self._do_reset = True
-
-
-class KeepCloseToBallReward(RewardBase):
-    def __init__(self, scale):
-        super().__init__(scale)
-        self._prev_reward = 0
-
-    def get_reward(self, game: Game) -> float:
-        if self._do_reset:
-            self._prev_reward = -1000
-
-        ball_pos = Vec2(game.ball.x, game.ball.z)
-        min_dist = np.min([(ball_pos - Vec2(r.x, r.z)).magnitude for r in game.robots if r.is_teammate]).item()
-        min_dist = min_dist
-        cur_reward = -min_dist / const.ARENA.depth
-        reward = cur_reward - self._prev_reward
-        self._prev_reward = cur_reward
-
-        if self._do_reset:
-            self._do_reset = False
-            return 0
-        return self.scale * reward
-
-
-class BallToEnemyReward(RewardBase):
-    def __init__(self, scale):
-        super().__init__(scale)
-        self._prev_reward = 0
-
-    def get_reward(self, game: Game) -> float:
-        if self._do_reset:
-            self._prev_reward = -1000
-
-        target_pos = Vec3(0, 0, const.ARENA.depth / 2)
-        ball_pos = Vec3(game.ball.x, game.ball.y, game.ball.z)
-        cur_reward = -(target_pos - ball_pos).magnitude * 2 / const.ARENA.depth
-        reward = cur_reward - self._prev_reward
-        self._prev_reward = cur_reward
-
-        if self._do_reset:
-            self._do_reset = False
-            return 0
-        return self.scale * reward
-
-
 class HelperEnv(gym.Env):
     def __init__(self):
-        self.observation_space = spaces.Box(np.ones(22), -np.ones(22), dtype=np.float32)
-        self.action_space = spaces.Box(np.ones(4), -np.ones(4), dtype=np.float32)
+        self.observation_space = spaces.Box(np.ones(41), -np.ones(41), dtype=np.float32)
+        self.action_space = spaces.Box(np.ones(3), -np.ones(3), dtype=np.float32)
         self._local_runner = LocalRunnerClient(two_player=False)
         self._game: Game = None
         self._receive_game()
-        self._kctb_reward = KeepCloseToBallReward(1.0)
-        self._bte_reward = BallToEnemyReward(1.0)
+        self._reward_shaper = RewardShaper([
+            RewardFactory('bte', 1.0, BallToEnemyReward),
+            RewardFactory('vtb', 1.0, VelToBallReward),
+            RewardFactory('bvte', 1.0, BallVelToEnemyReward),
+        ])
 
     def step(self, action: Iterable[float]):
         winner = self._act(action)
-        game_ended = winner is not None
-        true_reward = 0 if winner is None else (1 if winner == Winner.First else -1)
 
+        true_reward = 0 if winner is None else (1 if winner == Winner.First else -1)
         self._receive_game()
         state = game_to_obs(self._game)
-
-        bte_reward = self._bte_reward.get_reward(self._game)
-        cctb_reward = self._kctb_reward.get_reward(self._game)
-        aux_total = bte_reward + cctb_reward
-        info = dict(reward_info=dict(aux_total=aux_total, bte_reward=bte_reward, cctb_reward=cctb_reward, true_reward=true_reward))
-
-        if game_ended:
+        aux_rewards = self._reward_shaper.get_rewards(self._game)
+        aux_total = np.sum([r.reward for r in aux_rewards])
+        aux_info = {f'{r.name}_reward': r.reward for r in aux_rewards}
+        info = dict(reward_info=dict(aux_total=aux_total, true_reward=true_reward, **aux_info))
+        if winner is not None:
             for _ in range(const.RESET_TICKS + 1):
                 self._act(action)
                 self._receive_game()
-            self._bte_reward.reset()
-            self._kctb_reward.reset()
-
-        return state, 0.0 * true_reward + aux_total, game_ended, info
+            self._reward_shaper.reset()
+        return state, 0.25 * true_reward + aux_total, winner is not None, info
 
     def reset(self):
         return game_to_obs(self._game)
@@ -176,6 +119,6 @@ class HelperEnv(gym.Env):
 
     def _act(self, action):
         split_actions = np.split(np.asarray(action), len(self._game.robots) // 2)
-        actions = {r.id: create_action(ac) for r, ac in zip(self._game.robots, split_actions)}
+        actions = {r.id: create_action(ac, r) for r, ac in zip(self._game.robots, split_actions)}
         assert len(actions) == len(split_actions)
         return self._local_runner.act(actions)

@@ -12,10 +12,31 @@ class Vec2:
     def magnitude(self):
         return math.sqrt(self.x * self.x + self.y * self.y)
 
-    def clamp(self, a, b):
+    @property
+    def normalized(self):
+        mag = self.magnitude
+        if mag < 1e-10:
+            return Vec2()
+        return self / mag
+
+    def clamp_pointwise(self, a, b):
         ax, ay = (a.x, a.y) if isinstance(a, Vec2) else (a, a)
         bx, by = (b.x, b.y) if isinstance(b, Vec2) else (b, b)
         return Vec2(max(ax, min(bx, self.x)), max(ay, min(by, self.y)))
+
+    def clamp_length(self, max_len):
+        mag = self.magnitude
+        return self.clone() if mag <= max_len else self / mag * max_len
+
+    def __matmul__(self, other):
+        return self.x * other.x + self.y * other.y
+
+    @staticmethod
+    def dot(a, b):
+        return a.x * b.x + a.y * b.y
+
+    def clone(self):
+        return Vec2(self.x, self.y)
 
     def __add__(self, other):
         if isinstance(other, Vec2):
