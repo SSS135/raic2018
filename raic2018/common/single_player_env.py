@@ -35,14 +35,34 @@ def game_to_obs(game: Game) -> List[float]:
     return obs
 
 
-def create_action(arr, robot):
-    vel_x, vel_z, jump = arr
+def get_pos3(x):
+    return Vec3(x.x, x.y, x.z)
+
+
+def get_vel3(x):
+    return Vec3(x.velocity_x, x.velocity_y, x.velocity_z)
+
+
+def get_pos2(x):
+    return Vec2(x.x, x.z)
+
+
+def get_vel2(x):
+    return Vec2(x.velocity_x, x.velocity_z)
+
+
+def create_action(arr, ball, robot):
+    vel_fwd, vel_right, jump = arr
     jump = jump > 0.75
 
+    fwd_dir = (get_pos2(ball) - get_pos2(robot)).normalized
+    right_dir = Vec2(fwd_dir.y, -fwd_dir.x)
+    vel = fwd_dir * vel_fwd + right_dir * vel_right
+
     action = Action()
-    action.target_velocity_x = vel_x * const.ROBOT_MAX_GROUND_SPEED
+    action.target_velocity_x = vel.x * const.ROBOT_MAX_GROUND_SPEED
     action.target_velocity_y = (1 if jump else (0 if robot.touch else -1)) * const.ROBOT_MAX_GROUND_SPEED
-    action.target_velocity_z = vel_z * const.ROBOT_MAX_GROUND_SPEED
+    action.target_velocity_z = vel.y * const.ROBOT_MAX_GROUND_SPEED
     action.jump_speed = (1 if jump else 0) * const.ROBOT_MAX_JUMP_SPEED
     return action
 
@@ -86,7 +106,7 @@ class HelperEnv(gym.Env):
         self._receive_game()
         self._reward_shaper = RewardShaper([
             RewardFactory('bte', 1.0, BallToEnemyReward),
-            RewardFactory('vtb', 1.0, VelToBallReward),
+            RewardFactory('vtb', 0.4, VelToBallReward),
             RewardFactory('bvte', 1.0, BallVelToEnemyReward),
         ])
 
@@ -105,7 +125,7 @@ class HelperEnv(gym.Env):
                 self._act(action)
                 self._receive_game()
             self._reward_shaper.reset()
-        return state, 0.25 * true_reward + aux_total, winner is not None, info
+        return state, 0.15 * true_reward + aux_total, winner is not None, info
 
     def reset(self):
         return game_to_obs(self._game)
@@ -119,6 +139,6 @@ class HelperEnv(gym.Env):
 
     def _act(self, action):
         split_actions = np.split(np.asarray(action), len(self._game.robots) // 2)
-        actions = {r.id: create_action(ac, r) for r, ac in zip(self._game.robots, split_actions)}
+        actions = {r.id: create_action(ac, self._game.ball, r) for r, ac in zip(self._game.robots, split_actions)}
         assert len(actions) == len(split_actions)
         return self._local_runner.act(actions)
