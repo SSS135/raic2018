@@ -9,6 +9,7 @@ from gym import spaces
 from raic2018.common.vec2 import Vec2
 from raic2018.common.vec3 import Vec3
 from raic2018.common.reward_shaping import RewardFactory, RewardShaper, KeepCloseToBallReward, BallToEnemyReward, BallVelToEnemyReward, VelToBallReward
+from .action_spaces import MultiDiscreteActions
 
 
 def get_pos_vel(obj: Union[Robot, Ball]) -> Iterable[float]:
@@ -33,38 +34,6 @@ def game_to_obs(game: Game) -> List[float]:
         obs.extend(bdir / bdir.magnitude)
         obs.append(int(r.touch))
     return obs
-
-
-def get_pos3(x):
-    return Vec3(x.x, x.y, x.z)
-
-
-def get_vel3(x):
-    return Vec3(x.velocity_x, x.velocity_y, x.velocity_z)
-
-
-def get_pos2(x):
-    return Vec2(x.x, x.z)
-
-
-def get_vel2(x):
-    return Vec2(x.velocity_x, x.velocity_z)
-
-
-def create_action(arr, ball, robot):
-    vel_fwd, vel_right, jump = arr
-    jump = jump > 0.75
-
-    fwd_dir = (get_pos2(ball) - get_pos2(robot)).normalized
-    right_dir = Vec2(fwd_dir.y, -fwd_dir.x)
-    vel = fwd_dir * vel_fwd + right_dir * vel_right
-
-    action = Action()
-    action.target_velocity_x = vel.x * const.ROBOT_MAX_GROUND_SPEED
-    action.target_velocity_y = (1 if jump else (0 if robot.touch else -1)) * const.ROBOT_MAX_GROUND_SPEED
-    action.target_velocity_z = vel.y * const.ROBOT_MAX_GROUND_SPEED
-    action.jump_speed = (1 if jump else 0) * const.ROBOT_MAX_JUMP_SPEED
-    return action
 
 
 class FrameSkipEnv(gym.Wrapper):
@@ -99,8 +68,8 @@ class HelperFrameSkipEnv(FrameSkipEnv):
 
 class HelperEnv(gym.Env):
     def __init__(self):
+        self._actions = MultiDiscreteActions()
         self.observation_space = spaces.Box(np.ones(41), -np.ones(41), dtype=np.float32)
-        self.action_space = spaces.Box(np.ones(3), -np.ones(3), dtype=np.float32)
         self._local_runner = LocalRunnerClient(two_player=False)
         self._game: Game = None
         self._receive_game()
@@ -109,6 +78,9 @@ class HelperEnv(gym.Env):
             RewardFactory('vtb', 0.4, VelToBallReward),
             RewardFactory('bvte', 1.0, BallVelToEnemyReward),
         ])
+
+    @property
+    def action_space(self): return self._actions.space
 
     def step(self, action: Iterable[float]):
         winner = self._act(action)
@@ -139,6 +111,6 @@ class HelperEnv(gym.Env):
 
     def _act(self, action):
         split_actions = np.split(np.asarray(action), len(self._game.robots) // 2)
-        actions = {r.id: create_action(ac, self._game.ball, r) for r, ac in zip(self._game.robots, split_actions)}
+        actions = {r.id: self._actions.create_action(ac, r, self._game) for r, ac in zip(self._game.robots, split_actions)}
         assert len(actions) == len(split_actions)
         return self._local_runner.act(actions)

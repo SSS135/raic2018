@@ -90,6 +90,9 @@ class Vec3():
         else:
             return Vec3(self.x ** power, self.y ** power, self.z ** power)
 
+    def __neg__(self):
+        return Vec3(-self.x, -self.y, -self.z)
+
     def __iter__(self):
         return iter((self.x, self.y, self.z))
 
