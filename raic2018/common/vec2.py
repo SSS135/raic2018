@@ -89,6 +89,9 @@ class Vec2:
         else:
             return Vec2(self.x ** power, self.y ** power)
 
+    def __neg__(self):
+        return Vec2(-self.x, -self.y)
+
     def __iter__(self):
         return iter((self.x, self.y))
 
